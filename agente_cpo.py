@@ -2,7 +2,7 @@ import requests
 from ddgs import DDGS
 from agente_coo import verificar_estoque_robusto
 
-AIRTABLE_TOKEN = "patem3xqKRjc8qGRP.7a082d5cca20b0507331dfc90d63804bdd3607ab7f0d2849a37a38254ccb3465".strip()
+AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN", "path6ehvNDRYCc82L.dd90138f1df27ae82eeba74cf6121218785c742460d24ec6828d7e0fde8046bd").strip()
 BASE_ID = "appjM48jtF1tccYVq".strip()
 TABELA_FORNECEDORES = "Fornecedores"
 
