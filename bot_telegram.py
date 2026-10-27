@@ -12,7 +12,7 @@ from agente_ia import consultar_groq
 web_app = Flask(__name__)
 
 @web_app.route('/')
-def home(): return "☀️ Bot ERP Raio do Sol Operacional com Controle de Perfis!"
+def home(): return "☀️ Bot ERP Raio do Sol Operacional!"
 
 def rodar_servidor_web(): web_app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 threading.Thread(target=rodar_servidor_web, daemon=True).start()
@@ -23,39 +23,39 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "gsk_dwJkko1UcFR90wOsWVV7WGdyb3FYme6c3q
 pendencias_confirmacao = {}
 
 def obter_menu_por_perfil(cargo):
-    """Gera menus dinâmicos com base no cargo do usuário no Airtable."""
+    """Gera menus dinâmicos ocultando o teste para quem não for Dono."""
+    botoes = []
+    
     if cargo == "Dono":
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 DRE Completo por Unidade", callback_data="menu_dre")],
-            [InlineKeyboardButton("📦 Auditado de Estoque (COO)", callback_data="menu_estoque")],
-            [InlineKeyboardButton("💵 Lançar Venda / Caixa", callback_data="menu_venda_instrucao")],
-            [InlineKeyboardButton("🧪 Injetar Dados de Teste", callback_data="menu_popular")]
-        ])
+        botoes.append([InlineKeyboardButton("📊 DRE Completo por Unidade", callback_data="menu_dre")])
+        botoes.append([InlineKeyboardButton("📦 Auditoria de Estoque (COO)", callback_data="menu_estoque")])
+        botoes.append([InlineKeyboardButton("📝 Instrução de Contagem Física", callback_data="menu_contagem_instrucao")])
+        botoes.append([InlineKeyboardButton("💵 Como Lançar Venda/Caixa", callback_data="menu_venda_instrucao")])
+        # Botão exclusivo do Dono
+        botoes.append([InlineKeyboardButton("🧪 [DONO] Injetar Dados de Teste", callback_data="menu_popular")])
+        
     elif cargo == "Funcionario":
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton("📦 Lançar Contagem de Estoque", callback_data="menu_contagem_instrucao")],
-            [InlineKeyboardButton("💵 Registrar Venda do Turno", callback_data="menu_venda_instrucao")]
-        ])
+        botoes.append([InlineKeyboardButton("📦 Instrução para Contagem de Estoque", callback_data="menu_contagem_instrucao")])
+        botoes.append([InlineKeyboardButton("💵 Como Registrar Venda do Turno", callback_data="menu_venda_instrucao")])
+        botoes.append([InlineKeyboardButton("📦 Consultar Rupturas de Estoque", callback_data="menu_estoque")])
+        
     else:  # Cliente
-        return InlineKeyboardMarkup([
-            [InlineKeyboardButton("💄 Catálogo Fillara Cosméticos", callback_data="cliente_fillara")],
-            [InlineKeyboardButton("☀️ Cardápio Bar Raio do Sol", callback_data="cliente_bar")],
-            [InlineKeyboardButton("🔥 Linha Erótica", callback_data="cliente_erotica")],
-            [InlineKeyboardButton("💬 Falar com Atendente", callback_data="cliente_atendente")]
-        ])
+        botoes.append([InlineKeyboardButton("💄 Catálogo Fillara Cosméticos", callback_data="cliente_fillara")])
+        botoes.append([InlineKeyboardButton("☀️ Cardápio Bar Raio do Sol", callback_data="cliente_bar")])
+        botoes.append([InlineKeyboardButton("🔥 Linha Erótica", callback_data="cliente_erotica")])
+        botoes.append([InlineKeyboardButton("💬 Falar com Atendente", callback_data="cliente_atendente")])
+
+    return InlineKeyboardMarkup(botoes)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    chat_id = update.effective_chat.id
-    
-    # Valida ou cadastra automaticamente
     dados_user = agente_usuarios.obter_ou_cadastrar_usuario(user.id, user.first_name)
     cargo = dados_user.get("cargo", "Cliente")
 
     msg = (
-        f"☀️ **Bem-vindo(a), {user.first_name}!**\n"
-        f"👤 **Perfil:** `{cargo}`\n\n"
-        f"Selecione uma opção no menu abaixo:"
+        f"☀️ **Diretoria Virtual - Bar Raio do Sol, Fillara & Linha Erótica**\n\n"
+        f"👤 **Usuário:** {user.first_name} | **Perfil:** `{cargo}`\n\n"
+        f"Selecione uma opção abaixo:"
     )
     
     menu = obter_menu_por_perfil(cargo)
@@ -73,40 +73,52 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE)
     dados_user = agente_usuarios.obter_ou_cadastrar_usuario(user.id, user.first_name)
     cargo = dados_user.get("cargo", "Cliente")
 
-    # Restrição de segurança: Clientes não acionam comandos de caixa/estoque
     if cargo == "Cliente":
         res_ia = consultar_groq(
-            "Você é a atendente virtual do Bar Raio do Sol, Fillara Cosméticos e Linha Erótica. "
-            "Seja simpática, apresente os produtos e ajude o cliente com dúvidas de compras.", 
-            f"Mensagem do cliente {user.first_name}: {msg_texto}"
+            "Você é a atendente virtual do Bar Raio do Sol, Fillara Cosméticos e Linha Erótica. Seja simpática e ajude com dúvidas de compras.", 
+            f"Cliente {user.first_name}: {msg_texto}"
         )
         await update.message.reply_text(res_ia)
         return
 
-    # Ações para Funcionário e Dono
     msg_lower = msg_texto.lower()
 
-    # INTERCEPTAÇÃO DE ESTOQUE
-    gatilhos_estoque = ["prateleira", "pratileira", "geladeira", "freezer", "palete"]
+    # 1. INTERCEPTAÇÃO DE CONTAGEM FÍSICA POR TEXTO (Prateleira, Geladeira, Freezer, Palete)
+    gatilhos_estoque = ["prateleira", "pratileira", "geladeira", "freezer", "frezer", "palete"]
     if any(k in msg_lower for k in gatilhos_estoque) and "-" in msg_texto:
-        prompt = f'Extraia os itens e retorne APENAS JSON puro: [{{"produto": "nome", "quantidade": num, "local": "Prateleira/Geladeira/Freezer/Palete"}}]. Msg: {msg_texto}'
+        prompt = (
+            "O usuário enviou uma contagem física contendo seções (Prateleira, Geladeira, Freezer, Palete) e itens com quantidades (ex: Heineken - 19). "
+            "Para cada item, identifique o produto, a quantidade (número inteiro ou decimal) e o local correto onde ele está (Prateleira, Geladeira, Freezer ou Palete). "
+            "Retorne APENAS um JSON puro no formato de lista de objetos: "
+            '[{"produto": "nome do produto", "quantidade": numero, "local": "Prateleira/Geladeira/Freezer/Palete"}]. '
+            f"Mensagem enviada: {msg_texto}"
+        )
         json_resp = consultar_groq(prompt)
         try:
             limpo = json_resp.replace("```json", "").replace("```", "").strip()
             lista_itens = json.loads(limpo[limpo.find("["):limpo.rfind("]")+1])
+            
             if len(lista_itens) > 0:
                 pendencias_confirmacao[chat_id] = {"intencao": "contagem_fisica", "itens": lista_itens}
+                
+                resumo = "\n".join([f"• {i['produto']} ({i.get('local', 'Geral')}): {i['quantidade']} un." for i in lista_itens[:6]])
+                if len(lista_itens) > 6: resumo += f"\n... e mais {len(lista_itens)-6} itens."
+
                 botoes = InlineKeyboardMarkup([[
-                    InlineKeyboardButton(f"✅ Sincronizar {len(lista_itens)} Itens", callback_data="conf_sim"),
+                    InlineKeyboardButton(f"✅ Sincronizar {len(lista_itens)} Itens no Airtable", callback_data="conf_sim"),
                     InlineKeyboardButton("❌ Cancelar", callback_data="conf_nao")
                 ]])
-                await update.message.reply_text(f"📦 **Contagem Detectada!** {len(lista_itens)} itens lidos. Confirmar?", reply_markup=botoes, parse_mode="Markdown")
+                
+                await update.message.reply_text(
+                    f"📦 **Contagem Física de Estoque Detectada!**\n\nResumo da leitura:\n{resumo}\n\nDeseja enviar esta contagem ao COO para atualizar o Airtable?",
+                    reply_markup=botoes, parse_mode="Markdown"
+                )
                 return
         except Exception as e:
-            await update.message.reply_text(f"⚠️ Erro ao ler estoque: `{e}`", parse_mode="Markdown")
+            await update.message.reply_text(f"⚠️ **Erro ao interpretar contagem:** `{e}`\nRetorno IA: `{json_resp}`", parse_mode="Markdown")
             return
 
-    # INTERCEPTAÇÃO FINANCEIRA
+    # 2. INTERCEPTAÇÃO DE LANÇAMENTOS FINANCEIROS / CAIXA
     gatilhos_caixa = ["registra", "lança", "venda", "vendi", "entrada"]
     if any(k in msg_lower for k in gatilhos_caixa) and any(c.isdigit() for c in msg_texto):
         prompt = f'Extraia APENAS em JSON puro: {{"receita_bruta": num, "custos": num, "taxas": num, "unidade": "Bar Raio do Sol" ou "Fillara Cosméticos" ou "Linha Erótica", "data": "2026-10-27"}}. Msg: {msg_texto}'
@@ -116,15 +128,25 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE)
             dados = json.loads(limpo[limpo.find("{"):limpo.rfind("}")+1])
             receita = float(dados.get("receita_bruta", 0))
             if receita > 0:
-                pendencias_confirmacao[chat_id] = {"intencao": "lancar_caixa_avancado", "receita_bruta": receita, "custos": float(dados.get("custos", 0)), "taxas": float(dados.get("taxas", 0)), "unidade": str(dados.get("unidade", "Bar Raio do Sol")), "data": "2026-10-27"}
+                pendencias_confirmacao[chat_id] = {
+                    "intencao": "lancar_caixa_avancado", 
+                    "receita_bruta": receita, 
+                    "custos": float(dados.get("custos", 0)), 
+                    "taxas": float(dados.get("taxas", 0)), 
+                    "unidade": str(dados.get("unidade", "Bar Raio do Sol")), 
+                    "data": "2026-10-27"
+                }
                 botoes = InlineKeyboardMarkup([[
                     InlineKeyboardButton("✅ Confirmar Lançamento", callback_data="conf_sim"),
                     InlineKeyboardButton("❌ Cancelar", callback_data="conf_nao")
                 ]])
-                await update.message.reply_text(f"❓ **Confirma Lançamento?**\n💰 Receita: R$ {receita:.2f}\n🏢 {dados.get('unidade')}", reply_markup=botoes, parse_mode="Markdown")
+                await update.message.reply_text(
+                    f"❓ **Confirma Lançamento?**\n\n🏢 Unidade: {dados.get('unidade')}\n💰 Receita: R$ {receita:.2f}\n💸 Custos: R$ {dados.get('custos', 0):.2f}", 
+                    reply_markup=botoes, parse_mode="Markdown"
+                )
                 return
         except Exception as e:
-            await update.message.reply_text(f"⚠️ Erro no parser: `{e}`", parse_mode="Markdown")
+            await update.message.reply_text(f"⚠️ Erro no parser de caixa: `{e}`", parse_mode="Markdown")
             return
 
     await update.message.reply_text("💡 Utilize o menu guiado abaixo:", reply_markup=obter_menu_por_perfil(cargo), parse_mode="Markdown")
@@ -139,7 +161,6 @@ async def botoes_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dados_user = agente_usuarios.obter_ou_cadastrar_usuario(user.id, user.first_name)
     cargo = dados_user.get("cargo", "Cliente")
 
-    # Ações do Menu
     if data == "menu_dre" and cargo == "Dono":
         botoes = InlineKeyboardMarkup([
             [InlineKeyboardButton("☀️ Bar Raio do Sol", callback_data="dre_bar")],
@@ -161,11 +182,36 @@ async def botoes_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"{res}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Voltar", callback_data="menu_voltar")]]), parse_mode="Markdown")
         return
 
+    elif data == "menu_contagem_instrucao":
+        botoes = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Voltar", callback_data="menu_voltar")]])
+        await query.edit_message_text(
+            "📦 **Como enviar a Contagem de Estoque:**\n\nBasta colar sua lista diária no chat. Exemplo:\n\n"
+            "*Prateleira*\nVodka Smirnoff - 1\nVinho Don Bosco - 4\n\n*Geladeira*\nHeineken - 19\n\n*Freezer*\nLitrão Itaipava - 40\n\n"
+            "O bot processará os locais e criará o botão para sincronizar com o Airtable automaticamente!",
+            reply_markup=botoes, parse_mode="Markdown"
+        )
+        return
+
+    elif data == "menu_venda_instrucao":
+        botoes = InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Voltar", callback_data="menu_voltar")]])
+        await query.edit_message_text(
+            "💵 **Como registrar uma venda:**\n\nEnvie uma mensagem direta no chat informando os valores. Exemplo:\n\n"
+            "• *'Vendi 150 com custo 50 no bar'*\n• *'Registra entrada de 1200 na Fillara'*\n\nO bot calculará o lucro e exibirá o botão de confirmação.",
+            reply_markup=botoes, parse_mode="Markdown"
+        )
+        return
+
+    elif data == "menu_popular" and cargo == "Dono":
+        res = orquestrador.processar_comando_orquestrado("popular_dados", {})
+        msg_pop = res.get('mensagem') if isinstance(res, dict) else str(res)
+        await query.edit_message_text(f"🧪 **Injeção de Teste:**\n{msg_pop}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Voltar", callback_data="menu_voltar")]]), parse_mode="Markdown")
+        return
+
     elif data == "menu_voltar":
         await start(update, context)
         return
 
-    # Confirmação Sim/Não
+    # Confirmação Sim / Não
     dado = pendencias_confirmacao.get(chat_id)
     if not dado:
         await query.edit_message_text("⚠️ Ação expirada.", reply_markup=obter_menu_por_perfil(cargo))
@@ -174,7 +220,7 @@ async def botoes_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "conf_sim":
         res = orquestrador.processar_comando_orquestrado(dado["intencao"], dado)
         msg_res = res.get('mensagem') if isinstance(res, dict) else str(res)
-        await query.edit_message_text(f"✅ **Concluído!**\n{msg_res}", reply_markup=obter_menu_por_perfil(cargo))
+        await query.edit_message_text(f"✅ **Concluído com Sucesso!**\n{msg_res}", reply_markup=obter_menu_por_perfil(cargo))
         pendencias_confirmacao.pop(chat_id, None)
 
     elif data == "conf_nao":
