@@ -85,7 +85,7 @@ def transcrever_audio_groq(caminho_arquivo_audio):
     return None
 
 # =====================================================================
-# ROTINAS DE ALERTAS PROATIVOS (ALERTAS AUTOMÁTICOS)
+# ROTINAS DE ALERTAS PROATIVOS
 # =====================================================================
 
 async def checar_alertas_proativos(context: ContextTypes.DEFAULT_TYPE):
@@ -97,20 +97,20 @@ async def checar_alertas_proativos(context: ContextTypes.DEFAULT_TYPE):
     # 1. Alerta de Estoque Crítico
     if hasattr(agente_coo, 'verificar_estoque_robusto'):
         res_estoque = agente_coo.verificar_estoque_robusto()
-        if "alerta" in str(res_estoque).lower() or "crítico" in str(res_estoque).lower() or "zerado" in str(res_estoque).lower():
+        if any(k in str(res_estoque).lower() for k in ["alerta", "crítico", "zerado", "baixo", "repor"]):
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"🚨 **[ALERTA PROATIVO DE ESTOQUE]**\n\nIdentifiquei itens em nível crítico no seu inventário:\n{res_estoque}",
+                text=f"🚨 **[ALERTA PROATIVO DE ESTOQUE]**\n\nVerificação periódica identificou atenções no inventário:\n\n{res_estoque}",
                 parse_mode="Markdown"
             )
 
     # 2. Alerta Financeiro / Caixa
     if hasattr(agente_cfo, 'analisar_caixa'):
         res_caixa = agente_cfo.analisar_caixa()
-        if "atencao" in str(res_caixa).lower() or "alerta" in str(res_caixa).lower():
+        if any(k in str(res_caixa).lower() for k in ["atencao", "alerta", "negativo", "limite"]):
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"⚠️ **[ALERTA FINANCEIRO PROATIVO]**\n\nNotificação da sua diretoria de finanças:\n{res_caixa}",
+                text=f"⚠️ **[ALERTA FINANCEIRO PROATIVO]**\n\nNotificação periódica da sua diretoria de finanças:\n\n{res_caixa}",
                 parse_mode="Markdown"
             )
 
@@ -123,7 +123,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Agenda a rotina de alertas proativos para rodar a cada 4 horas (14400 segundos)
     if context.job_queue:
-        # Remove agendamentos antigos para evitar duplicidade
         jobs_existentes = context.job_queue.get_jobs_by_name(str(chat_id))
         for job in jobs_existentes:
             job.schedule_removal()
@@ -139,10 +138,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "☀️ **Diretoria Virtual - Bar Raio do Sol, Fillara & Linha Erótica**\n\n"
         "Envie mensagens por **texto** ou **áudio** para consultar ou registrar informações.\n\n"
-        "🔒 **Segurança Ativa:** Todos os lançamentos exigirão sua confirmação antes de gravar no Airtable.\n"
-        "🔔 **Alertas Proativos Ativados:** Notificarei você automaticamente sobre qualquer anomalia no estoque ou caixa."
+        "🔒 **Segurança Ativa:** Lançamentos de caixa e cadastros exigirão sua confirmação por botão antes de salvar no Airtable.\n"
+        "🔔 **Alertas Proativos Ativados:** Agendamento de monitoramento ativo a cada 4h para estoque e caixa."
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
+
+
+async def status_comando(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /status para verificar se os alertas proativos estão ativos."""
+    chat_id = update.effective_chat.id
+    jobs = context.job_queue.get_jobs_by_name(str(chat_id)) if context.job_queue else []
+    
+    if jobs:
+        proxima_exec = jobs[0].next_t.strftime("%H:%M:%S") if jobs[0].next_t else "Em breve"
+        await update.message.reply_text(
+            f"🟢 **Sistema Proativo Operacional!**\n\n"
+            f"• **Monitoramento de Estoque/Caixa:** Ativo\n"
+            f"• **Frequência:** A cada 4 horas\n"
+            f"• **Próxima verificação agendada:** {proxima_exec}",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(
+            "⚠️ **Atenção:** Os alertas proativos não estão agendados para este chat.\n\nEnvie o comando `/start` para ativar o agendamento.",
+            parse_mode="Markdown"
+        )
 
 
 async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -169,49 +189,51 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     msg_lower = mensagem_texto.lower()
 
-    # 1. ESCRITA COM CONFIRMAÇÃO PRÉVIA: Registro no Caixa
-    if any(k in msg_lower for k in ["registra entrada", "lança entrada", "registra venda", "lançar venda", "registrar caixa", "lançar caixa"]):
-        prompt_parser = f'Extraia o valor numérico e a descrição da mensagem. Responda ESTRITAMENTE em formato JSON: {{"valor": 100.0, "descricao": "venda de bebidas"}}\nMensagem: {mensagem_texto}'
+    # AMPLIADA A LISTA DE GATILHOS DE CAIXA
+    gatilhos_caixa = ["registra entrada", "lança entrada", "registra venda", "lançar venda", "registrar caixa", "lançar caixa", "vendi", "recebi", "entrada de", "venda de"]
+    if any(k in msg_lower for k in gatilhos_caixa):
+        prompt_parser = f'Extraia o valor numérico e a descrição da mensagem. Responda ESTRITAMENTE em formato JSON sem markdown: {{"valor": 100.0, "descricao": "venda"}}\nMensagem: {mensagem_texto}'
         json_resp = consultar_groq(prompt_parser)
         try:
             dados = json.loads(json_resp[json_resp.find("{"):json_resp.rfind("}")+1])
-            valor = dados.get("valor", 0)
-            descricao = dados.get("descricao", "Venda via Telegram")
+            valor = float(dados.get("valor", 0))
+            descricao = str(dados.get("descricao", "Venda via Telegram"))
 
-            # Armazena na memória de pendências
-            pendencias_confirmacao[chat_id] = {
-                "tipo_acao": "caixa",
-                "valor": valor,
-                "descricao": descricao
-            }
+            if valor > 0:
+                pendencias_confirmacao[chat_id] = {
+                    "tipo_acao": "caixa",
+                    "valor": valor,
+                    "descricao": descricao
+                }
 
-            keyboard = [
-                [
-                    InlineKeyboardButton("✅ Confirmar Lançamento", callback_data="conf_caixa_sim"),
-                    InlineKeyboardButton("❌ Cancelar", callback_data="conf_caixa_nao")
+                keyboard = [
+                    [
+                        InlineKeyboardButton("✅ Confirmar Lançamento", callback_data="conf_caixa_sim"),
+                        InlineKeyboardButton("❌ Cancelar", callback_data="conf_caixa_nao")
+                    ]
                 ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+                reply_markup = InlineKeyboardMarkup(keyboard)
 
-            await update.message.reply_text(
-                f"❓ **Deseja confirmar o seguinte lançamento no Caixa?**\n\n"
-                f"💰 **Valor:** R$ {valor:.2f}\n"
-                f"📝 **Descrição:** {descricao}",
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
-            )
-            return
+                await update.message.reply_text(
+                    f"❓ **Deseja confirmar o seguinte lançamento no Caixa?**\n\n"
+                    f"💰 **Valor:** R$ {valor:.2f}\n"
+                    f"📝 **Descrição:** {descricao}",
+                    reply_markup=reply_markup,
+                    parse_mode="Markdown"
+                )
+                return
         except Exception as e:
             print(f"Erro no parser de caixa: {e}")
 
-    # 2. ESCRITA COM CONFIRMAÇÃO PRÉVIA: Cadastro no CRM
-    if any(k in msg_lower for k in ["cadastra cliente", "cadastrar cliente", "novo cliente"]):
-        prompt_crm = f'Extraia nome e telefone. Responda ESTRITAMENTE em formato JSON: {{"nome": "Nome do Cliente", "telefone": "73900000000"}}\nMensagem: {mensagem_texto}'
+    # AMPLIADA A LISTA DE GATILHOS DE CRM
+    gatilhos_crm = ["cadastra cliente", "cadastrar cliente", "novo cliente", "salvar cliente", "adicionar cliente"]
+    if any(k in msg_lower for k in gatilhos_crm):
+        prompt_crm = f'Extraia nome e telefone. Responda ESTRITAMENTE em formato JSON sem markdown: {{"nome": "Nome", "telefone": "73900000000"}}\nMensagem: {mensagem_texto}'
         json_resp = consultar_groq(prompt_crm)
         try:
             dados = json.loads(json_resp[json_resp.find("{"):json_resp.rfind("}")+1])
-            nome = dados.get("nome", "Cliente")
-            telefone = dados.get("telefone", "")
+            nome = str(dados.get("nome", "Cliente"))
+            telefone = str(dados.get("telefone", ""))
 
             pendencias_confirmacao[chat_id] = {
                 "tipo_acao": "crm",
@@ -256,7 +278,7 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 # =====================================================================
-# PROCESSAMENTO DOS BOTÕES DE CONFIRMAÇÃO (CALLBACK BOTÕES)
+# PROCESSAMENTO DOS BOTÕES DE CONFIRMAÇÃO
 # =====================================================================
 
 async def tratar_botoes_confirmacao(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -270,7 +292,6 @@ async def tratar_botoes_confirmacao(update: Update, context: ContextTypes.DEFAUL
         await query.edit_message_text("⚠️ Ação expirada ou já processada.")
         return
 
-    # Processa confirmação do Caixa
     if query.data == "conf_caixa_sim":
         sucesso = lancar_no_caixa(dado_pendente["valor"], dado_pendente["descricao"], tipo="Entrada")
         if sucesso:
@@ -281,14 +302,13 @@ async def tratar_botoes_confirmacao(update: Update, context: ContextTypes.DEFAUL
                 parse_mode="Markdown"
             )
         else:
-            await query.edit_message_text("❌ Falha ao gravar lançamento no Airtable. Verifique o token de acesso.")
+            await query.edit_message_text("❌ Falha ao gravar lançamento no Airtable.")
         pendencias_confirmacao.pop(chat_id, None)
 
     elif query.data == "conf_caixa_nao":
         await query.edit_message_text("🚫 **Lançamento cancelado pelo usuário.**")
         pendencias_confirmacao.pop(chat_id, None)
 
-    # Processa confirmação do CRM
     elif query.data == "conf_crm_sim":
         sucesso = cadastrar_cliente_crm(dado_pendente["nome"], dado_pendente["telefone"])
         if sucesso:
@@ -308,10 +328,11 @@ async def tratar_botoes_confirmacao(update: Update, context: ContextTypes.DEFAUL
 
 
 if __name__ == "__main__":
-    print("🤖 [BOT INTERATIVO ERP V3] Servidor com Confirmação e Alertas Proativos Iniciado!")
+    print("🤖 [BOT INTERATIVO ERP V3.1] Servidor Iniciado!")
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("status", status_comando))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), processar_mensagem))
     app.add_handler(MessageHandler(filters.VOICE, processar_mensagem))
     app.add_handler(CallbackQueryHandler(tratar_botoes_confirmacao))
