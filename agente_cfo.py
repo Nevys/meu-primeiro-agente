@@ -1,86 +1,86 @@
-import os
-from google import genai
-from google.genai import types
+import requests
 
-# 1. INSIRA SUA CHAVE DA API AQUI
-os.environ["GEMINI_API_KEY"] = "AQ.Ab8RN6Ia7knuOUhdwdnr3TMg8i3gpi60VY2W9EQslvDRe1p9Og"
-client = genai.Client()
+AIRTABLE_TOKEN = "patem3xqKRjc8qGRP.7a082d5cca20b0507331dfc90d63804bdd3607ab7f0d2849a37a38254ccb3465".strip()
+BASE_ID = "appjM48jtF1tccYVq".strip()
+TABELA_CAIXA = "Caixa"
 
-# 2. A FERRAMENTA DO CFO (A ponte entre a IA e seus números)
-def registrar_fechamento_caixa(receita_bruta: float, custo_produtos: float, taxas: float) -> str:
-    """
-    Registra o fechamento do dia no banco de dados e calcula as margens reais.
-    Deve ser chamada sempre que o usuário informar os números de vendas e custos.
-    """
-    lucro_liquido = receita_bruta - custo_produtos - taxas
-    margem = (lucro_liquido / receita_bruta) * 100 if receita_bruta > 0 else 0
+def obter_resumo_caixa():
+    """Lê a aba Caixa no Airtable e calcula o saldo acumulado."""
+    url = f"https://api.airtable.com/v0/{BASE_ID}/{TABELA_CAIXA}"
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_TOKEN}",
+        "Content-Type": "application/json"
+    }
     
-    # [FUTURO]: Aqui colocaremos o código que envia esses dados direto para o seu Airtable/AppSheet
-    
-    resposta_sistema = (
-        f"DADOS SALVOS COM SUCESSO NO BANCO DE DADOS.\n"
-        f"Lucro Líquido Calculado: R$ {lucro_liquido:.2f}\n"
-        f"Margem de Lucro Real: {margem:.2f}%"
-    )
-    return resposta_sistema
-
-# 3. O CÉREBRO DO CFO (O Prompt Executivo)
-cfo_prompt = """
-Você é o CFO Virtual e Analista de Business Intelligence do Bar Raio do Sol e da Fillara Cosméticos.
-Sua missão é blindar o caixa, otimizar margens de lucro e proteger o enquadramento fiscal do MEI.
-
-REGRAS:
-1. ZERO ALUCINAÇÃO: Nunca invente números. Use APENAS os dados fornecidos pelo usuário e os resultados das suas ferramentas.
-2. SEMPRE ACIONE A FERRAMENTA: Se o usuário enviar dados de caixa, acione a ferramenta 'registrar_fechamento_caixa' antes de responder.
-3. ANÁLISE PRAGMÁTICA: Calcule a Margem de Contribuição e o Lucro Líquido. Diga se a operação rodou no azul ou no vermelho.
-4. CUSTOS OCULTOS: Avise se as taxas da plataforma ou maquininha estão corroendo o lucro.
-5. FORMATAÇÃO EXECUTIVA: Apresente valores em BRL (R$ 1.500,00). Use tabelas Markdown. Seja frio, analítico e termine com um plano de ação de 1 passo.
-"""
-
-config = types.GenerateContentConfig(
-    tools=[registrar_fechamento_caixa], # Entregando a ferramenta para a IA
-    system_instruction=cfo_prompt,
-    temperature=0.1, # Temperatura super baixa (0.1) para que ele seja frio, matemático e não invente coisas
-)
-
-# 4. O MOTOR DE EXECUÇÃO
-def relatorio_diario_cfo(mensagem_usuario: str):
-    print("="*50)
-    print(f"🟢 VOCÊ: {mensagem_usuario}\n")
-    
-    # Enviando a mensagem para o CFO
-    response = client.models.generate_content(
-        model='gemini-2.5-flash',
-        contents=mensagem_usuario,
-        config=config
-    )
-    
-    # Verificando se o CFO decidiu usar a calculadora/banco de dados
-    if response.function_calls:
-        for call in response.function_calls:
-            print(f"[⚙️ O CFO acionou o sistema: {call.name}]")
+    try:
+        resposta = requests.get(url, headers=headers)
+        dados = resposta.json()
+        
+        if 'error' in dados:
+            return {"sucesso": False, "erro": dados['error']}
             
-            # Executando a matemática e salvando os dados
-            resultado_ferramenta = registrar_fechamento_caixa(**call.args)
-            print(f"[💾 Resposta do Sistema: {resultado_ferramenta}]\n")
+        receita_total = 0.0
+        custos_totais = 0.0
+        taxas_totais = 0.0
+        
+        for reg in dados.get('records', []):
+            campos = reg.get('fields', {})
             
-            # CFO lê o resultado e escreve o relatório final
-            resposta_final = client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=f"O usuário disse: '{mensagem_usuario}'. O sistema de banco de dados retornou: '{resultado_ferramenta}'. Escreva o seu relatório executivo de CFO para o usuário.",
-                config=types.GenerateContentConfig(system_instruction=cfo_prompt, temperature=0.1)
-            )
-            print(f"👔 CFO VIRTUAL:\n{resposta_final.text}")
+            raw_rec = campos.get('Receita Bruta')
+            raw_cust = campos.get('Custos')
+            raw_taxa = campos.get('Taxas')
+            
+            try:
+                receita_total += float(raw_rec) if raw_rec is not None else 0.0
+                custos_totais += float(raw_cust) if raw_cust is not None else 0.0
+                taxas_totais += float(raw_taxa) if raw_taxa is not None else 0.0
+            except (ValueError, TypeError):
+                continue
+                
+        lucro_liquido = receita_total - custos_totais - taxas_totais
+        return {
+            "sucesso": True,
+            "receita_total": receita_total,
+            "custos_totais": custos_totais,
+            "taxas_totais": taxas_totais,
+            "lucro_liquido": lucro_liquido
+        }
+    except Exception as e:
+        return {"sucesso": False, "erro": str(e)}
+
+def analisar_aprovacao_financeira(orcamento_necessario=198.00):
+    print("="*60)
+    print("👔 [CFO Virtual] Analisando liquidez de caixa e teto fiscal...\n")
+    
+    resumo = obter_resumo_caixa()
+    if not resumo["sucesso"]:
+        print(f"❌ Erro ao consultar a aba Caixa: {resumo['erro']}")
+        return
+        
+    saldo = resumo["lucro_liquido"]
+    receita = resumo["receita_total"]
+    
+    print(f"📊 RECEITA BRUTA ACUMULADA: R$ {receita:.2f}")
+    print(f"💵 SALDO LÍQUIDO EM CAIXA: R$ {saldo:.2f}")
+    print(f"🛍️ ORÇAMENTO SOLICITADO PELO CPO: R$ {orcamento_necessario:.2f}")
+    print("-" * 50)
+    
+    # Validação de Margem / Caixa
+    if saldo >= orcamento_necessario:
+        sobra = saldo - orcamento_necessario
+        print("✅ APROVADO: Há caixa suficiente para cobrir o pedido sem comprometer a operação.")
+        print(f"💰 Saldo projetado após a compra: R$ {sobra:.2f}")
     else:
-        # Caso ele não precise calcular nada (ex: tirar uma dúvida)
-        print(f"👔 CFO VIRTUAL:\n{response.text}")
-    print("="*50)
+        deficit = orcamento_necessario - saldo
+        print("🛑 RECUSADO / ALERTA DE FLUXO: Caixa insuficiente para aprovar a compra total.")
+        print(f"⚠️ Faltam R$ {deficit:.2f} em caixa. Priorize o item de maior giro (Gelo) ou aguarde novas entradas.")
+        
+    print("-" * 50)
+    # Alerta Teto MEI (R$ 81.000 / ano)
+    LIMITE_MEI = 81000.00
+    percentual_mei = (receita / LIMITE_MEI) * 100
+    print(f"📈 Termômetro MEI: R$ {receita:.2f} / R$ {LIMITE_MEI:.2f} ({percentual_mei:.1f}% utilizado)")
+    print("="*60)
 
-# 5. O SEU TESTE REAL (Simulando o fim de um turno no Bar Raio do Sol)
 if __name__ == "__main__":
-    cenario_teste = (
-        "Acabei de fechar o bar. Tivemos R$ 1.200 em vendas brutas de combos de bebida. "
-        "O custo das garrafas e gelo foi de R$ 450. A maquininha de cartão nos cobrou R$ 60 de taxa. "
-        "Analise esses números para mim."
-    )
-    relatorio_diario_cfo(cenario_teste)
+    analisar_aprovacao_financeira()
