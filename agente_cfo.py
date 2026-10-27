@@ -1,86 +1,75 @@
+import os
 import requests
 
 AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN", "path6ehvNDRYCc82L.dd90138f1df27ae82eeba74cf6121218785c742460d24ec6828d7e0fde8046bd").strip()
-BASE_ID = "appjM48jtF1tccYVq".strip()
-TABELA_CAIXA = "Caixa"
+AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID", "appjM48jtF1tccYVq").strip()
 
-def obter_resumo_caixa():
-    """Lê a aba Caixa no Airtable e calcula o saldo acumulado."""
-    url = f"https://api.airtable.com/v0/{BASE_ID}/{TABELA_CAIXA}"
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_TOKEN}",
-        "Content-Type": "application/json"
-    }
+def analisar_caixa():
+    """Analisa o saldo geral do caixa no Airtable."""
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/Caixa"
+    headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return "Não foi possível acessar a tabela de Caixa no Airtable."
+        
+        records = res.json().get("records", [])
+        total = 0.0
+        for r in records:
+            fields = r.get("fields", {})
+            val = float(fields.get("Valor", 0.0))
+            tipo = str(fields.get("Tipo", "Entrada")).lower()
+            if "saida" in tipo or "despesa" in tipo or "retirada" in tipo:
+                total -= val
+            else:
+                total += val
+        return f"Saldo atual consolidado no Caixa: R$ {total:.2f}."
+    except Exception as e:
+        return f"Erro ao analisar caixa: {e}"
+
+def gerar_dre_unidade(nome_unidade):
+    """Calcula receitas, despesas e lucro líquido de uma unidade específica no Airtable."""
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/Caixa"
+    headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
     
     try:
-        resposta = requests.get(url, headers=headers)
-        dados = resposta.json()
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code != 200:
+            return f"Erro ao acessar o Airtable para gerar DRE de {nome_unidade} (Status: {res.status_code})."
         
-        if 'error' in dados:
-            return {"sucesso": False, "erro": dados['error']}
-            
-        receita_total = 0.0
-        custos_totais = 0.0
-        taxas_totais = 0.0
+        records = res.json().get("records", [])
+        total_entradas = 0.0
+        total_saidas = 0.0
+        total_registros = 0
         
-        for reg in dados.get('records', []):
-            campos = reg.get('fields', {})
+        for record in records:
+            fields = record.get("fields", {})
+            unidade_reg = str(fields.get("Unidade", "Bar Raio do Sol"))
             
-            raw_rec = campos.get('Receita Bruta')
-            raw_cust = campos.get('Custos')
-            raw_taxa = campos.get('Taxas')
-            
-            try:
-                receita_total += float(raw_rec) if raw_rec is not None else 0.0
-                custos_totais += float(raw_cust) if raw_cust is not None else 0.0
-                taxas_totais += float(raw_taxa) if raw_taxa is not None else 0.0
-            except (ValueError, TypeError):
-                continue
+            # Se o registro não tiver unidade preenchida ou corresponder à buscada
+            if nome_unidade.lower() in unidade_reg.lower() or not unidade_reg:
+                total_registros += 1
+                try:
+                    valor = float(fields.get("Valor", 0.0))
+                except (ValueError, TypeError):
+                    valor = 0.0
+                    
+                tipo = str(fields.get("Tipo", "Entrada")).lower()
                 
-        lucro_liquido = receita_total - custos_totais - taxas_totais
-        return {
-            "sucesso": True,
-            "receita_total": receita_total,
-            "custos_totais": custos_totais,
-            "taxas_totais": taxas_totais,
-            "lucro_liquido": lucro_liquido
-        }
+                if any(k in tipo for k in ["saida", "despesa", "retirada", "gasto"]):
+                    total_saidas += valor
+                else:
+                    total_entradas += valor
+                    
+        lucro_liquido = total_entradas - total_saidas
+        
+        relatorio = (
+            f"📊 **DRE Parcial - {nome_unidade}**\n\n"
+            f"📦 **Lançamentos Analisados:** {total_registros}\n"
+            f"💰 **Receitas Totais:** R$ {total_entradas:.2f}\n"
+            f"💸 **Despesas / Custos:** R$ {total_saidas:.2f}\n"
+            f"📈 **Resultado Operacional (Lucro):** R$ {lucro_liquido:.2f}"
+        )
+        return relatorio
     except Exception as e:
-        return {"sucesso": False, "erro": str(e)}
-
-def analisar_aprovacao_financeira(orcamento_necessario=198.00):
-    print("="*60)
-    print("👔 [CFO Virtual] Analisando liquidez de caixa e teto fiscal...\n")
-    
-    resumo = obter_resumo_caixa()
-    if not resumo["sucesso"]:
-        print(f"❌ Erro ao consultar a aba Caixa: {resumo['erro']}")
-        return
-        
-    saldo = resumo["lucro_liquido"]
-    receita = resumo["receita_total"]
-    
-    print(f"📊 RECEITA BRUTA ACUMULADA: R$ {receita:.2f}")
-    print(f"💵 SALDO LÍQUIDO EM CAIXA: R$ {saldo:.2f}")
-    print(f"🛍️ ORÇAMENTO SOLICITADO PELO CPO: R$ {orcamento_necessario:.2f}")
-    print("-" * 50)
-    
-    # Validação de Margem / Caixa
-    if saldo >= orcamento_necessario:
-        sobra = saldo - orcamento_necessario
-        print("✅ APROVADO: Há caixa suficiente para cobrir o pedido sem comprometer a operação.")
-        print(f"💰 Saldo projetado após a compra: R$ {sobra:.2f}")
-    else:
-        deficit = orcamento_necessario - saldo
-        print("🛑 RECUSADO / ALERTA DE FLUXO: Caixa insuficiente para aprovar a compra total.")
-        print(f"⚠️ Faltam R$ {deficit:.2f} em caixa. Priorize o item de maior giro (Gelo) ou aguarde novas entradas.")
-        
-    print("-" * 50)
-    # Alerta Teto MEI (R$ 81.000 / ano)
-    LIMITE_MEI = 81000.00
-    percentual_mei = (receita / LIMITE_MEI) * 100
-    print(f"📈 Termômetro MEI: R$ {receita:.2f} / R$ {LIMITE_MEI:.2f} ({percentual_mei:.1f}% utilizado)")
-    print("="*60)
-
-if __name__ == "__main__":
-    analisar_aprovacao_financeira()
+        return f"Erro interno ao calcular DRE: {e}"
