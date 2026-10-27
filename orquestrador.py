@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import sys
 from agente_coo import verificar_estoque_robusto
 from agente_cpo import gerar_ordens_de_compra
@@ -57,3 +58,6 @@ def executar_diagnostico_geral_erp():
 
 if __name__ == "__main__":
     executar_diagnostico_geral_erp()
+=======
+
+>>>>>>> 40b399fe3f77ec0a2977981530aee651d0437f5e
