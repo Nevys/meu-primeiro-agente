@@ -184,13 +184,15 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     msg_lower = mensagem_texto.lower()
 
-    # 1. FORÇAR CAPTURA DE LANÇAMENTOS FINANCEIROS / VENDAS
+    # 1. INTERCEPTAÇÃO FORÇADA DE VENDAS / LANÇAMENTOS (ANTES DA IA DIRETORIA)
     gatilhos_caixa = ["registra", "lança", "venda", "vendi", "recebi", "entrada", "caixa", "faturou", "ganhei"]
     if any(k in msg_lower for k in gatilhos_caixa) and any(char.isdigit() for char in mensagem_texto):
-        prompt_parser = f'Extraia o valor numérico total (ex: se disse "vendi 50", o valor é 50 ou multiplique se houver preço, ou extraia o número financeiro mencionado) e a descrição curta da mensagem. Responda ESTRITAMENTE em formato JSON sem markdown: {{"valor": 50.0, "descricao": "venda no bar"}}\nMensagem: {mensagem_texto}'
+        prompt_parser = f'Extraia estritamente o valor financeiro numérico total (ex: se "vendi 50" e o contexto for 50 reais ou quantidade multiplicada, extraia o valor em R$ ou número) e uma descrição curta. Responda APENAS em JSON puro, sem crases, sem markdown: {{"valor": 50.0, "descricao": "venda no bar"}}\nMensagem: {mensagem_texto}'
         json_resp = consultar_groq(prompt_parser)
         try:
-            dados = json.loads(json_resp[json_resp.find("{"):json_resp.rfind("}")+1])
+            # Limpeza rigorosa de blocos de código caso a IA insira crases
+            json_limpo = json_resp.replace("```json", "").replace("```", "").strip()
+            dados = json.loads(json_limpo[json_limpo.find("{"):json_limpo.rfind("}")+1])
             valor = float(dados.get("valor", 0))
             descricao = str(dados.get("descricao", mensagem_texto))
 
@@ -220,13 +222,14 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception as e:
             print(f"Erro no parser de caixa: {e}")
 
-    # 2. CADASTRO DE CLIENTE CRM
+    # 2. INTERCEPTAÇÃO DE CADASTRO DE CLIENTE CRM
     gatilhos_crm = ["cadastra cliente", "cadastrar cliente", "novo cliente", "salvar cliente", "adicionar cliente"]
     if any(k in msg_lower for k in gatilhos_crm):
-        prompt_crm = f'Extraia nome e telefone. Responda ESTRITAMENTE em formato JSON sem markdown: {{"nome": "Nome", "telefone": "73900000000"}}\nMensagem: {mensagem_texto}'
+        prompt_crm = f'Extraia nome e telefone. Responda APENAS em JSON puro, sem crases, sem markdown: {{"nome": "Nome", "telefone": "73900000000"}}\nMensagem: {mensagem_texto}'
         json_resp = consultar_groq(prompt_crm)
         try:
-            dados = json.loads(json_resp[json_resp.find("{"):json_resp.rfind("}")+1])
+            json_limpo = json_resp.replace("```json", "").replace("```", "").strip()
+            dados = json.loads(json_limpo[json_limpo.find("{"):json_limpo.rfind("}")+1])
             nome = str(dados.get("nome", "Cliente"))
             telefone = str(dados.get("telefone", ""))
 
@@ -255,7 +258,7 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception as e:
             print(f"Erro no parser CRM: {e}")
 
-    # 3. LEITURA: Consultas aos Agentes
+    # 3. CONSULTAS GERAIS AOS AGENTES (Caso não seja uma intenção de escrita)
     contexto_erp = ""
     if any(k in msg_lower for k in ["estoque", "falta", "coo", "inventario", "reposicao"]):
         if hasattr(agente_coo, 'verificar_estoque_robusto'):
@@ -323,7 +326,7 @@ async def tratar_botoes_confirmacao(update: Update, context: ContextTypes.DEFAUL
 
 
 if __name__ == "__main__":
-    print("🤖 [BOT INTERATIVO ERP V3.2] Servidor Iniciado!")
+    print("🤖 [BOT INTERATIVO ERP V3.3] Servidor Iniciado com Interceptação Rígida!")
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
