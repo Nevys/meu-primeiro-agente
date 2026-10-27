@@ -1,102 +1,78 @@
+import os
 import requests
+import time
 
 AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN", "path6ehvNDRYCc82L.dd90138f1df27ae82eeba74cf6121218785c742460d24ec6828d7e0fde8046bd").strip()
-BASE_ID = "appjM48jtF1tccYVq".strip()
-NOME_TABELA = "Inventario"
+AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID", "appjM48jtF1tccYVq").strip()
 
 def verificar_estoque_robusto():
-    url = f"https://api.airtable.com/v0/{BASE_ID}/{NOME_TABELA}"
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_TOKEN}",
-        "Content-Type": "application/json"
-    }
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/Inventário" 
+    headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}"}
+    try:
+        res = requests.get(url, headers=headers, timeout=15)
+        if res.status_code != 200: return f"⚠️ Erro ao acessar o Inventário: {res.text}"
+        
+        records = res.json().get("records", [])
+        alertas, total_itens = [], 0
+        
+        for record in records:
+            fields = record.get("fields", {})
+            produto = str(fields.get("Produto", "Item sem nome"))
+            unidade = str(fields.get("Unidade", "Geral"))
+            try:
+                qtd_atual = float(fields.get("Quantidade", 0))
+                estoque_min = float(fields.get("Estoque Mínimo", 5)) 
+            except (ValueError, TypeError): continue
+                
+            total_itens += 1
+            if qtd_atual <= estoque_min:
+                alertas.append(f"• **{produto}** ({unidade}): Restam {qtd_atual:.0f} unid. (Mín: {estoque_min:.0f})")
+                
+        if not alertas: return f"✅ **Auditoria do COO Concluída:** {total_itens} itens seguros!"
+        return "🚨 **ALERTA DE RUPTURA DE ESTOQUE** 🚨\n\n" + "\n".join(alertas)
+    except Exception as e: return f"❌ Erro interno COO: {e}"
+
+def sincronizar_contagem_fisica(itens_contados):
+    """Atualiza quantidades de itens existentes ou cria novos registros."""
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/Inventário"
+    headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}", "Content-Type": "application/json"}
     
-    todos_os_registros = []
-    offset = None
+    try:
+        res_get = requests.get(url, headers=headers)
+        registros_atuais = res_get.json().get('records', [])
+    except Exception as e:
+        return {"sucesso": False, "mensagem": f"Erro ao consultar Airtable: {e}"}
+
+    mapa_produtos = {r['fields'].get('Produto', '').lower().strip(): r['id'] for r in registros_atuais}
     
-    # 1. Tratamento de Paginação (Garante a leitura de todo o catálogo)
-    while True:
-        params = {"offset": offset} if offset else {}
-        try:
-            resposta = requests.get(url, headers=headers, params=params)
-            dados = resposta.json()
-            
-            if 'error' in dados:
-                return {"sucesso": False, "erro": dados['error']}
-            
-            records = dados.get('records', [])
-            todos_os_registros.extend(records)
-            
-            offset = dados.get('offset')
-            if not offset:
+    atualizacoes, criacoes = [], []
+    
+    for item in itens_contados:
+        nome_prod = str(item.get("produto", "")).strip()
+        qtd = float(item.get("quantidade", 0))
+        local = str(item.get("local", "Geral"))
+        
+        record_id = None
+        for prod_existente, rid in mapa_produtos.items():
+            if prod_existente in nome_prod.lower() or nome_prod.lower() in prod_existente:
+                record_id = rid
                 break
-        except Exception as e:
-            return {"sucesso": False, "erro": str(e)}
-
-    # 2. Segmentação por Categoria e Tratamento de Dados
-    alertas = {"Bebidas": [], "Cosméticos": [], "Insumos/Outros": []}
-    
-    for registro in todos_os_registros:
-        campos = registro.get('fields', {})
-        produto = campos.get('Produto', 'Produto Sem Nome')
-        categoria = campos.get('Categoria', 'Outros')
-        
-        # Conversão segura de dados
-        raw_qtd = campos.get('Qtd Atual')
-        raw_min = campos.get('Estoque Minimo')
-        
-        try:
-            qtd_atual = float(raw_qtd) if raw_qtd is not None else 0.0
-            estoque_minimo = float(raw_min) if raw_min is not None else 0.0
-        except (ValueError, TypeError):
-            continue
-
-        if qtd_atual < estoque_minimo:
-            item = {
-                "produto": produto,
-                "qtd_atual": qtd_atual,
-                "estoque_minimo": estoque_minimo,
-                "comprar": estoque_minimo - qtd_atual
-            }
-            
-            if "Bebida" in categoria:
-                alertas["Bebidas"].append(item)
-            elif "Cosmético" in categoria:
-                alertas["Cosméticos"].append(item)
-            else:
-                alertas["Insumos/Outros"].append(item)
-
-    return {"sucesso": True, "alertas": alertas}
-
-if __name__ == "__main__":
-    print("="*60)
-    print("⚙️ [COO V2 - PROD] Varredura Geral do Estoque no Airtable...\n")
-    
-    resultado = verificar_estoque_robusto()
-    
-    if not resultado["sucesso"]:
-        print(f"❌ Falha no relatório: {resultado['erro']}")
-    else:
-        alertas = resultado["alertas"]
-        tem_ruptura = any(len(v) > 0 for v in alertas.values())
-        
-        if not tem_ruptura:
-            print("✅ Estoque seguro no Bar Raio do Sol e na Fillara Cosméticos.")
+                
+        if record_id:
+            atualizacoes.append({"id": record_id, "fields": {"Quantidade": qtd, "Local": local}})
         else:
-            print("🚨 RELATÓRIO DE RUPTURA ORGANIZADO POR OPERAÇÃO:\n")
-            
-            if alertas["Bebidas"]:
-                print("🍺 [BAR RAIO DO SOL]")
-                for item in alertas["Bebidas"]:
-                    print(f"  • {item['produto']}: Atual = {item['qtd_atual']} | Mínimo = {item['estoque_minimo']} (Comprar +{item['comprar']})")
-            
-            if alertas["Cosméticos"]:
-                print("\n💄 [FILLARA COSMÉTICOS]")
-                for item in alertas["Cosméticos"]:
-                    print(f"  • {item['produto']}: Atual = {item['qtd_atual']} | Mínimo = {item['estoque_minimo']} (Comprar +{item['comprar']})")
-                    
-            if alertas["Insumos/Outros"]:
-                print("\n📦 [INSUMOS E DIVERSOS]")
-                for item in alertas["Insumos/Outros"]:
-                    print(f"  • {item['produto']}: Atual = {item['qtd_atual']} | Mínimo = {item['estoque_minimo']} (Comprar +{item['comprar']})")
-    print("="*60)
+            criacoes.append({"fields": {"Produto": nome_prod, "Quantidade": qtd, "Local": local, "Unidade": "Bar Raio do Sol"}})
+
+    total_sucesso = 0
+    
+    for i in range(0, len(atualizacoes), 10):
+        lote = atualizacoes[i:i+10]
+        requests.patch(url, headers=headers, json={"records": lote})
+        total_sucesso += len(lote)
+        
+    for i in range(0, len(criacoes), 10):
+        lote = criacoes[i:i+10]
+        requests.post(url, headers=headers, json={"records": lote})
+        total_sucesso += len(lote)
+
+    return {"sucesso": True, "mensagem": f"{total_sucesso} produtos sincronizados com sucesso (Físico vs Airtable)."}
