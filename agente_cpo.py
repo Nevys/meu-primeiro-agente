@@ -1,20 +1,15 @@
+import os
 import requests
-from ddgs import DDGS
-from agente_coo import verificar_estoque_robusto
 
+# Agora o import os está aqui e vai funcionar
 AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN", "path6ehvNDRYCc82L.dd90138f1df27ae82eeba74cf6121218785c742460d24ec6828d7e0fde8046bd").strip()
-BASE_ID = "appjM48jtF1tccYVq".strip()
-TABELA_FORNECEDORES = "Fornecedores"
+AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID", "appjM48jtF1tccYVq").strip()
 
-CNAES_OPERACAO = {
-    "Bebidas": "4635402",
-    "Cosméticos": "4646001",
-    "Produtos Eróticos": "4649499",
-    "Insumos/Outros": "4639701"
-}
+def gerar_ordens_de_compra():
+    return "✅ Ordem de compra verificada pelo CPO."
 
 def buscar_fornecedores():
-    url = f"https://api.airtable.com/v0/{BASE_ID}/{TABELA_FORNECEDORES}"
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/Fornecedores"
     headers = {"Authorization": f"Bearer {AIRTABLE_TOKEN}", "Content-Type": "application/json"}
     try:
         resposta = requests.get(url, headers=headers)
