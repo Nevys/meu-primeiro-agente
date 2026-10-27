@@ -89,12 +89,10 @@ def transcrever_audio_groq(caminho_arquivo_audio):
 # =====================================================================
 
 async def checar_alertas_proativos(context: ContextTypes.DEFAULT_TYPE):
-    """Verifica periodicamente o estoque e caixa para enviar alertas no Telegram."""
     chat_id = context.job.chat_id
     if not chat_id:
         return
 
-    # 1. Alerta de Estoque Crítico
     if hasattr(agente_coo, 'verificar_estoque_robusto'):
         res_estoque = agente_coo.verificar_estoque_robusto()
         if any(k in str(res_estoque).lower() for k in ["alerta", "crítico", "zerado", "baixo", "repor"]):
@@ -104,7 +102,6 @@ async def checar_alertas_proativos(context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
 
-    # 2. Alerta Financeiro / Caixa
     if hasattr(agente_cfo, 'analisar_caixa'):
         res_caixa = agente_cfo.analisar_caixa()
         if any(k in str(res_caixa).lower() for k in ["atencao", "alerta", "negativo", "limite"]):
@@ -121,7 +118,6 @@ async def checar_alertas_proativos(context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
-    # Agenda a rotina de alertas proativos para rodar a cada 4 horas (14400 segundos)
     if context.job_queue:
         jobs_existentes = context.job_queue.get_jobs_by_name(str(chat_id))
         for job in jobs_existentes:
@@ -138,14 +134,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         "☀️ **Diretoria Virtual - Bar Raio do Sol, Fillara & Linha Erótica**\n\n"
         "Envie mensagens por **texto** ou **áudio** para consultar ou registrar informações.\n\n"
-        "🔒 **Segurança Ativa:** Lançamentos de caixa e cadastros exigirão sua confirmação por botão antes de salvar no Airtable.\n"
-        "🔔 **Alertas Proativos Ativados:** Agendamento de monitoramento ativo a cada 4h para estoque e caixa."
+        "🔒 **Segurança Ativa:** Lançamentos de caixa exigem confirmação por botão.\n"
+        "🔔 **Alertas Proativos Ativados:** Monitoramento ativo a cada 4h."
     )
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def status_comando(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /status para verificar se os alertas proativos estão ativos."""
     chat_id = update.effective_chat.id
     jobs = context.job_queue.get_jobs_by_name(str(chat_id)) if context.job_queue else []
     
@@ -160,7 +155,7 @@ async def status_comando(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await update.message.reply_text(
-            "⚠️ **Atenção:** Os alertas proativos não estão agendados para este chat.\n\nEnvie o comando `/start` para ativar o agendamento.",
+            "⚠️ **Atenção:** Os alertas proativos não estão agendados.\n\nEnvie o comando `/start` para ativar.",
             parse_mode="Markdown"
         )
 
@@ -189,15 +184,15 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     msg_lower = mensagem_texto.lower()
 
-    # AMPLIADA A LISTA DE GATILHOS DE CAIXA
-    gatilhos_caixa = ["registra entrada", "lança entrada", "registra venda", "lançar venda", "registrar caixa", "lançar caixa", "vendi", "recebi", "entrada de", "venda de"]
-    if any(k in msg_lower for k in gatilhos_caixa):
-        prompt_parser = f'Extraia o valor numérico e a descrição da mensagem. Responda ESTRITAMENTE em formato JSON sem markdown: {{"valor": 100.0, "descricao": "venda"}}\nMensagem: {mensagem_texto}'
+    # 1. FORÇAR CAPTURA DE LANÇAMENTOS FINANCEIROS / VENDAS
+    gatilhos_caixa = ["registra", "lança", "venda", "vendi", "recebi", "entrada", "caixa", "faturou", "ganhei"]
+    if any(k in msg_lower for k in gatilhos_caixa) and any(char.isdigit() for char in mensagem_texto):
+        prompt_parser = f'Extraia o valor numérico total (ex: se disse "vendi 50", o valor é 50 ou multiplique se houver preço, ou extraia o número financeiro mencionado) e a descrição curta da mensagem. Responda ESTRITAMENTE em formato JSON sem markdown: {{"valor": 50.0, "descricao": "venda no bar"}}\nMensagem: {mensagem_texto}'
         json_resp = consultar_groq(prompt_parser)
         try:
             dados = json.loads(json_resp[json_resp.find("{"):json_resp.rfind("}")+1])
             valor = float(dados.get("valor", 0))
-            descricao = str(dados.get("descricao", "Venda via Telegram"))
+            descricao = str(dados.get("descricao", mensagem_texto))
 
             if valor > 0:
                 pendencias_confirmacao[chat_id] = {
@@ -225,7 +220,7 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Exception as e:
             print(f"Erro no parser de caixa: {e}")
 
-    # AMPLIADA A LISTA DE GATILHOS DE CRM
+    # 2. CADASTRO DE CLIENTE CRM
     gatilhos_crm = ["cadastra cliente", "cadastrar cliente", "novo cliente", "salvar cliente", "adicionar cliente"]
     if any(k in msg_lower for k in gatilhos_crm):
         prompt_crm = f'Extraia nome e telefone. Responda ESTRITAMENTE em formato JSON sem markdown: {{"nome": "Nome", "telefone": "73900000000"}}\nMensagem: {mensagem_texto}'
@@ -328,7 +323,7 @@ async def tratar_botoes_confirmacao(update: Update, context: ContextTypes.DEFAUL
 
 
 if __name__ == "__main__":
-    print("🤖 [BOT INTERATIVO ERP V3.1] Servidor Iniciado!")
+    print("🤖 [BOT INTERATIVO ERP V3.2] Servidor Iniciado!")
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
